@@ -34,8 +34,6 @@ const registerSchema = z.object({
 
   password: passwordSchema,
 
-  // Optional phone for public registration.
-  // If provided, it must be valid.
   phone: z
     .union([phoneSchema, z.literal("")])
     .optional(),
@@ -47,10 +45,10 @@ const loginSchema = z.object({
 });
 
 const resetSchema = z.object({
-  token: z.string().regex(
-    /^[a-f0-9]{64}$/i,
-    "Invalid reset token"
-  ),
+  token: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/i, "Invalid reset token"),
+
   password: passwordSchema,
 });
 
@@ -66,10 +64,17 @@ const publicUser = (user) => ({
   role: user.role,
 });
 
+// ==========================================
+// PRODUCTION COOKIE CONFIGURATION
+// ==========================================
+
+const isProduction = () =>
+  process.env.NODE_ENV === "production";
+
 const cookieOptions = () => ({
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax",
+  secure: isProduction(),
+  sameSite: isProduction() ? "none" : "lax",
   path: "/",
   maxAge: 24 * 60 * 60 * 1000,
 });
@@ -77,8 +82,8 @@ const cookieOptions = () => ({
 const clearSession = (res) => {
   res.clearCookie("access_token", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: isProduction(),
+    sameSite: isProduction() ? "none" : "lax",
     path: "/",
   });
 };
@@ -99,8 +104,16 @@ const setSession = (res, user) => {
     }
   );
 
-  res.cookie("access_token", token, cookieOptions());
+  res.cookie(
+    "access_token",
+    token,
+    cookieOptions()
+  );
 };
+
+// ==========================================
+// VALIDATION HELPER
+// ==========================================
 
 const validation = (schema, body) => {
   const result = schema.safeParse(body);
@@ -124,11 +137,16 @@ const validation = (schema, body) => {
 
 exports.register = async (req, res, next) => {
   try {
-    const data = validation(registerSchema, req.body);
+    const data = validation(
+      registerSchema,
+      req.body
+    );
 
     const email = data.email.toLowerCase();
 
-    const existingUser = await User.exists({ email });
+    const existingUser = await User.exists({
+      email,
+    });
 
     if (existingUser) {
       return res.status(409).json({
@@ -174,7 +192,10 @@ exports.register = async (req, res, next) => {
 
 exports.login = async (req, res, next) => {
   try {
-    const data = validation(loginSchema, req.body);
+    const data = validation(
+      loginSchema,
+      req.body
+    );
 
     const user = await User.findOne({
       email: data.email.toLowerCase(),
@@ -234,7 +255,11 @@ exports.logout = (req, res) => {
 // FORGOT PASSWORD
 // ==========================================
 
-exports.forgotPassword = async (req, res, next) => {
+exports.forgotPassword = async (
+  req,
+  res,
+  next
+) => {
   try {
     const emailResult = z
       .string()
@@ -251,7 +276,9 @@ exports.forgotPassword = async (req, res, next) => {
 
     const email = emailResult.data.toLowerCase();
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({
+      email,
+    });
 
     if (user && user.isActive) {
       const token = crypto
@@ -274,7 +301,7 @@ exports.forgotPassword = async (req, res, next) => {
       const clientUrl = (
         process.env.CLIENT_URL ||
         "http://localhost:5173"
-      ).replace(/\/$/, "");
+      ).replace(/\/+$/, "");
 
       const link =
         `${clientUrl}/reset-password?token=${token}`;
@@ -301,18 +328,20 @@ exports.forgotPassword = async (req, res, next) => {
 
         await transport.sendMail({
           from:
-            process.env.MAIL_FROM ||
+            process.env.SMTP_FROM ||
             process.env.SMTP_USER,
+
           to: user.email,
-          subject: "TravelEase password reset",
+
+          subject:
+            "TravelEase password reset",
+
           text:
             "Reset your password using this link " +
             "(expires in 15 minutes):\n\n" +
             link,
         });
-      } else if (
-        process.env.NODE_ENV !== "production"
-      ) {
+      } else if (!isProduction()) {
         console.log(
           "DEV ONLY reset URL:",
           link
@@ -338,9 +367,16 @@ exports.forgotPassword = async (req, res, next) => {
 // RESET PASSWORD
 // ==========================================
 
-exports.resetPassword = async (req, res, next) => {
+exports.resetPassword = async (
+  req,
+  res,
+  next
+) => {
   try {
-    const data = validation(resetSchema, req.body);
+    const data = validation(
+      resetSchema,
+      req.body
+    );
 
     const hash = crypto
       .createHash("sha256")
@@ -359,7 +395,8 @@ exports.resetPassword = async (req, res, next) => {
     if (!user) {
       return res.status(400).json({
         success: false,
-        message: "Reset link is invalid or expired",
+        message:
+          "Reset link is invalid or expired",
       });
     }
 
@@ -370,7 +407,6 @@ exports.resetPassword = async (req, res, next) => {
 
     user.resetTokenHash = undefined;
     user.resetTokenExpiresAt = undefined;
-
     user.passwordChangedAt = new Date();
 
     await user.save();

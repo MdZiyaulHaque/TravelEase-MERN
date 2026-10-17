@@ -8,12 +8,30 @@ const rateLimit = require("express-rate-limit");
 
 const app = express();
 
+const isProduction = process.env.NODE_ENV === "production";
+
 const clientOrigin = (
-  process.env.CLIENT_URL ||
-  "http://localhost:5173"
-).replace(/\/$/, "");
+  process.env.CLIENT_URL || "http://localhost:5173"
+).trim().replace(/\/+$/, "");
+
+// Production must use an explicit HTTPS frontend URL.
+if (
+  isProduction &&
+  (!process.env.CLIENT_URL ||
+    !clientOrigin.startsWith("https://"))
+) {
+  throw new Error(
+    "Production CLIENT_URL must be configured with the HTTPS frontend origin"
+  );
+}
 
 app.disable("x-powered-by");
+
+// Render runs behind a trusted reverse proxy.
+// Required for accurate client IPs and rate limiting.
+if (isProduction) {
+  app.set("trust proxy", 1);
+}
 
 // ========================================
 // SECURITY HEADERS
@@ -51,25 +69,26 @@ app.use(
       "PUT",
       "PATCH",
       "DELETE",
-      "OPTIONS"
+      "OPTIONS",
     ],
     allowedHeaders: [
       "Content-Type",
-      "Authorization"
-    ]
+      "Authorization",
+    ],
   })
 );
 
 // ========================================
 // PAYMENT WEBHOOK
-// IMPORTANT: Raw body must be preserved.
+// Preserve the exact raw request body for
+// Razorpay signature verification.
 // ========================================
 
 app.post(
   "/api/payments/webhook",
   express.raw({
     type: "application/json",
-    limit: "256kb"
+    limit: "256kb",
   }),
   require("./routes/payment.routes").webhook
 );
@@ -80,21 +99,21 @@ app.post(
 
 app.use(
   express.json({
-    limit: "20kb"
+    limit: "20kb",
   })
 );
 
 app.use(cookieParser());
 
 // ========================================
-// CSRF / CROSS-SITE REQUEST PROTECTION
+// CSRF / ORIGIN PROTECTION
 // ========================================
 
 const unsafeMethods = new Set([
   "POST",
   "PUT",
   "PATCH",
-  "DELETE"
+  "DELETE",
 ]);
 
 app.use((req, res, next) => {
@@ -105,34 +124,38 @@ app.use((req, res, next) => {
   const origin = req.get("origin");
   const fetchSite = req.get("sec-fetch-site");
 
-  // Reject requests coming from another origin.
+  // If an Origin header exists, it must match
+  // the configured frontend exactly.
   if (origin && origin !== clientOrigin) {
     return res.status(403).json({
       success: false,
-      message: "Origin not allowed"
+      message: "Origin not allowed",
     });
   }
 
-  // Reject requests explicitly identified as cross-site.
-  if (fetchSite === "cross-site") {
-    return res.status(403).json({
-      success: false,
-      message: "Cross-site request blocked"
-    });
-  }
-
-  // Browser requests carrying the session cookie
-  // must supply an allowed Origin.
-  // Requests without browser headers (such as
-  // Postman) remain supported for local testing.
+  // Cross-site requests from our own Vercel
+  // frontend are allowed when Origin matches.
+  // Other cross-site requests are rejected.
   if (
-    req.cookies?.access_token &&
-    fetchSite &&
-    !origin
+    fetchSite === "cross-site" &&
+    origin !== clientOrigin
   ) {
     return res.status(403).json({
       success: false,
-      message: "Origin required"
+      message: "Cross-site request blocked",
+    });
+  }
+
+  // Authenticated browser requests must provide
+  // the exact permitted frontend Origin.
+  if (
+    req.cookies?.access_token &&
+    fetchSite &&
+    origin !== clientOrigin
+  ) {
+    return res.status(403).json({
+      success: false,
+      message: "Origin required",
     });
   }
 
@@ -162,8 +185,8 @@ app.use(
     message: {
       success: false,
       message:
-        "Too many authentication requests; please retry later"
-    }
+        "Too many authentication requests; please retry later",
+    },
   }),
   require("./routes/auth.routes")
 );
@@ -251,7 +274,7 @@ app.use(
   express.static(
     path.join(__dirname, "uploads"),
     {
-      maxAge: "1d"
+      maxAge: "1d",
     }
   )
 );
@@ -263,7 +286,7 @@ app.use(
 app.use((req, res) => {
   return res.status(404).json({
     success: false,
-    message: "Route not found"
+    message: "Route not found",
   });
 });
 
@@ -296,7 +319,7 @@ app.use((err, req, res, next) => {
   return res.status(status).json({
     success: false,
     message,
-    requestId: req.requestId
+    requestId: req.requestId,
   });
 });
 
