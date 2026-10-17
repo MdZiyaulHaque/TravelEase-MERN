@@ -1,0 +1,16 @@
+const mongoose=require('mongoose');
+const {z}=require('zod');
+const Itinerary=require('../models/Itinerary');
+const TourPackage=require('../models/TourPackage');
+const objectId=z.string().refine(mongoose.isValidObjectId,'Invalid package ID');
+const hhmm=z.union([z.literal(''),z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/,'Time must be HH:MM')]);
+const activity=z.object({time:hhmm.default(''),title:z.string().trim().min(1).max(120),description:z.string().max(1000).default(''),location:z.string().max(160).default('')}).strict();
+const schema=z.object({day:z.coerce.number().int().min(1),title:z.string().trim().min(2).max(160),description:z.string().max(2000).default(''),activities:z.array(activity).max(30).default([]),pickupLocation:z.string().max(200).default(''),pickupTime:hhmm.default(''),dropLocation:z.string().max(200).default(''),dropTime:hhmm.default(''),meals:z.array(z.enum(['Breakfast','Lunch','Dinner'])).max(3).default([]),overnightStay:z.string().max(200).default('')}).strict();
+const fail=(res,msg,status=400)=>res.status(status).json({success:false,message:msg});
+const validId=(req,res,next)=>mongoose.isValidObjectId(req.params.packageId)&&(!req.params.id||mongoose.isValidObjectId(req.params.id))?next():fail(res,'Invalid ID');
+async function loadPackage(req,res){const p=await TourPackage.findById(req.params.packageId);if(!p){fail(res,'Package not found',404);return null;}return p;}
+exports.validId=validId;
+exports.list=async(req,res,next)=>{try{const p=await loadPackage(req,res);if(!p)return;if(!p.isActive&&req.user?.role!=='admin')return fail(res,'Package not found',404);const data=await Itinerary.find({package:p._id}).sort({day:1}).lean();res.json({success:true,data});}catch(e){next(e)}};
+exports.create=async(req,res,next)=>{try{const p=await loadPackage(req,res);if(!p)return;const parsed=schema.safeParse(req.body);if(!parsed.success)return fail(res,parsed.error.issues[0].message);if(parsed.data.day>p.durationDays)return fail(res,'Day exceeds package duration');const exists=await Itinerary.exists({package:p._id,day:parsed.data.day});if(exists)return fail(res,'This day already exists',409);const data=await Itinerary.create({...parsed.data,package:p._id});res.status(201).json({success:true,data});}catch(e){if(e.code===11000)return fail(res,'This day already exists',409);next(e)}};
+exports.update=async(req,res,next)=>{try{const p=await loadPackage(req,res);if(!p)return;const parsed=schema.partial().safeParse(req.body);if(!parsed.success)return fail(res,parsed.error.issues[0].message);if(!Object.keys(parsed.data).length)return fail(res,'No fields to update');if(parsed.data.day&&parsed.data.day>p.durationDays)return fail(res,'Day exceeds package duration');const doc=await Itinerary.findOne({package:p._id,_id:req.params.id});if(!doc)return fail(res,'Itinerary day not found',404);Object.assign(doc,parsed.data);await doc.save();res.json({success:true,data:doc});}catch(e){if(e.code===11000)return fail(res,'This day already exists',409);next(e)}};
+exports.remove=async(req,res,next)=>{try{const doc=await Itinerary.findOneAndDelete({package:req.params.packageId,_id:req.params.id});if(!doc)return fail(res,'Itinerary day not found',404);res.json({success:true,message:'Day removed'});}catch(e){next(e)}};

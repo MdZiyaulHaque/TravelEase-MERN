@@ -1,0 +1,44 @@
+﻿# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment secrets
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Build files
+dist/
+**/dist/
+build/
+**/build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Backups and archives
+*.gz
+*.archive
+*.bak
+*.zip
+*.dump
+
+# Generated files
+generated_data/
+**/generated_data/
+uploads/
+**/uploads/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+
+
+# Vite cache
+.vite/
+**/.vite/

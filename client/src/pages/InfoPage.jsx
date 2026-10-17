@@ -1,0 +1,1 @@
+export default function InfoPage({title,description}){return <main className="container-wide py-24 min-h-[55vh]"><h1 className="text-4xl font-extrabold">{title}</h1><p className="mt-5 max-w-2xl text-slate-600">{description}</p></main>}

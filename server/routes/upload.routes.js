@@ -1,0 +1,5 @@
+const router=require('express').Router();const multer=require('multer');const path=require('path');const crypto=require('crypto');const fs=require('fs');const {requireAuth,allowRoles}=require('../middleware/auth');
+const dir=path.join(__dirname,'..','uploads');fs.mkdirSync(dir,{recursive:true});
+const upload=multer({storage:multer.diskStorage({destination:dir,filename:(req,file,cb)=>cb(null,crypto.randomUUID()+({ 'image/jpeg':'.jpg','image/png':'.png','image/webp':'.webp'}[file.mimetype]||'.bin'))}),limits:{fileSize:2*1024*1024},fileFilter:(req,file,cb)=>cb(null,['image/jpeg','image/png','image/webp'].includes(file.mimetype))});
+router.post('/',requireAuth,allowRoles('admin'),(req,res,next)=>upload.single('image')(req,res,err=>{if(err)return res.status(400).json({success:false,message:err.message});if(!req.file)return res.status(400).json({success:false,message:'Valid JPEG, PNG or WebP image required (max 2 MB)'});res.status(201).json({success:true,url:'/uploads/'+req.file.filename});}));
+module.exports=router;

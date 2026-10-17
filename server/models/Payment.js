@@ -1,0 +1,3 @@
+const mongoose=require('mongoose');
+const schema=new mongoose.Schema({booking:{type:mongoose.Schema.Types.ObjectId,ref:'Booking',required:true,index:true},customer:{type:mongoose.Schema.Types.ObjectId,ref:'User',required:true,index:true},gateway:{type:String,default:'razorpay'},orderId:{type:String,required:true,unique:true},paymentId:{type:String,sparse:true,unique:true},amountPaise:{type:Number,required:true,min:1},currency:{type:String,default:'INR'},status:{type:String,enum:['created','paid','failed','refund_pending','partially_refunded','refunded'],default:'created'},refundId:String,refundAmountPaise:{type:Number,default:0},refundReason:String,paidAt:Date,refundedAt:Date},{timestamps:true});
+module.exports=mongoose.model('Payment',schema);

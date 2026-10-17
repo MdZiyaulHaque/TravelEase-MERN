@@ -1,0 +1,8 @@
+import React,{useState} from 'react';
+import RatingStars from '../components/RatingStars';
+const API=(import.meta.env.VITE_API_URL||'http://localhost:8000/api').replace(/\/$/,'');
+export default function WriteReview({bookingId}){
+ const [rating,setRating]=useState(5),[title,setTitle]=useState(''),[comment,setComment]=useState(''),[status,setStatus]=useState(''),[busy,setBusy]=useState(false);
+ async function submit(e){e.preventDefault();setBusy(true);setStatus('');try{const r=await fetch(`${API}/reviews`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({bookingId,rating,title,comment})});const j=await r.json();if(!r.ok)throw Error(j.message||'Submission failed');setStatus('Review submitted! Waiting for admin approval.');setTitle('');setComment('')}catch(e){setStatus(e.message)}finally{setBusy(false)}}
+ return <form onSubmit={submit} className="mx-auto max-w-xl space-y-4 rounded-2xl border bg-white p-6 shadow"><h2 className="text-2xl font-bold">Review your trip</h2><label className="block font-medium">Your rating</label><RatingStars value={rating} onChange={setRating}/><label className="block">Title<input className="mt-1 w-full rounded-lg border p-3" required minLength={3} maxLength={120} value={title} onChange={e=>setTitle(e.target.value)}/></label><label className="block">Experience<textarea className="mt-1 w-full rounded-lg border p-3" rows={5} required minLength={10} maxLength={2000} value={comment} onChange={e=>setComment(e.target.value)}/></label><button disabled={busy||!bookingId} className="rounded-lg bg-cyan-700 px-6 py-3 font-semibold text-white disabled:opacity-50">{busy?'Submitting…':'Submit review'}</button>{status&&<p role="status" className="text-slate-700">{status}</p>}</form>
+}

@@ -1,0 +1,14 @@
+const router=require('express').Router();
+const c=require('../controllers/customer.controller');
+const {requireAuth,allowRoles}=require('../middleware/auth');
+router.use(requireAuth);
+router.get('/profile',c.profile);
+router.patch('/profile',c.updateProfile);
+router.use(allowRoles('admin'));
+router.get('/stats',c.stats);
+router.get('/',c.list);
+router.post('/',c.create);
+router.get('/:id',c.getOne);
+router.patch('/:id',c.update);
+router.patch('/:id/status',c.setStatus);
+module.exports=router;
