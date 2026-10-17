@@ -2,7 +2,7 @@
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const { z } = require("zod");
 
 const User = require("../models/User");
@@ -29,14 +29,9 @@ const phoneSchema = z
 
 const registerSchema = z.object({
   name: z.string().trim().min(2).max(80),
-
   email: z.string().trim().email().max(254),
-
   password: passwordSchema,
-
-  phone: z
-    .union([phoneSchema, z.literal("")])
-    .optional(),
+  phone: z.union([phoneSchema, z.literal("")]).optional(),
 });
 
 const loginSchema = z.object({
@@ -48,7 +43,6 @@ const resetSchema = z.object({
   token: z
     .string()
     .regex(/^[a-f0-9]{64}$/i, "Invalid reset token"),
-
   password: passwordSchema,
 });
 
@@ -63,10 +57,6 @@ const publicUser = (user) => ({
   phone: user.phone,
   role: user.role,
 });
-
-// ==========================================
-// PRODUCTION COOKIE CONFIGURATION
-// ==========================================
 
 const isProduction = () =>
   process.env.NODE_ENV === "production";
@@ -94,9 +84,7 @@ const setSession = (res, user) => {
   }
 
   const token = jwt.sign(
-    {
-      sub: user.id,
-    },
+    { sub: user.id },
     process.env.JWT_SECRET,
     {
       expiresIn: "1d",
@@ -104,16 +92,8 @@ const setSession = (res, user) => {
     }
   );
 
-  res.cookie(
-    "access_token",
-    token,
-    cookieOptions()
-  );
+  res.cookie("access_token", token, cookieOptions());
 };
-
-// ==========================================
-// VALIDATION HELPER
-// ==========================================
 
 const validation = (schema, body) => {
   const result = schema.safeParse(body);
@@ -121,7 +101,7 @@ const validation = (schema, body) => {
   if (!result.success) {
     const error = new Error(
       result.error.issues[0]?.message ||
-      "Validation failed"
+        "Validation failed"
     );
 
     error.status = 400;
@@ -130,6 +110,100 @@ const validation = (schema, body) => {
 
   return result.data;
 };
+
+// ==========================================
+// RESEND EMAIL CONFIGURATION
+// ==========================================
+
+let resendClient;
+
+function getResendClient() {
+  if (
+    !process.env.RESEND_API_KEY ||
+    !process.env.RESEND_FROM
+  ) {
+    return null;
+  }
+
+  if (!resendClient) {
+    resendClient = new Resend(
+      process.env.RESEND_API_KEY
+    );
+  }
+
+  return resendClient;
+}
+
+async function sendPasswordResetEmail(email, link) {
+  const resend = getResendClient();
+
+  if (!resend) {
+    if (!isProduction()) {
+      console.log("DEV ONLY reset URL:", link);
+      return;
+    }
+
+    throw new Error(
+      "Resend email service is not configured"
+    );
+  }
+
+  const result = await resend.emails.send({
+    from: process.env.RESEND_FROM,
+    to: [email],
+    subject: "TravelEase | Reset Your Password",
+
+    text: [
+      "You requested a password reset for TravelEase.",
+      "",
+      "Open this link to reset your password:",
+      link,
+      "",
+      "This link expires in 15 minutes.",
+      "If you did not request this, ignore this email.",
+    ].join("\n"),
+
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:30px auto;padding:30px;border:1px solid #e5e7eb;border-radius:12px">
+        <h2 style="color:#0f172a">TravelEase</h2>
+
+        <h3 style="color:#1e293b">
+          Reset Your Password
+        </h3>
+
+        <p style="color:#475569;line-height:1.6">
+          We received a request to reset your
+          TravelEase account password.
+        </p>
+
+        <p style="margin:30px 0">
+          <a href="${link}"
+             style="background:#2563eb;color:white;padding:14px 24px;text-decoration:none;border-radius:8px;display:inline-block">
+            Reset Password
+          </a>
+        </p>
+
+        <p style="color:#475569">
+          This link expires in <b>15 minutes</b>.
+        </p>
+
+        <p style="color:#64748b;font-size:13px">
+          If you did not request a password reset,
+          you can safely ignore this email.
+        </p>
+      </div>
+    `,
+  });
+
+  if (result.error) {
+    throw new Error(
+      result.error.message ||
+        "Failed to send reset email"
+    );
+  }
+
+  return result.data;
+}
 
 // ==========================================
 // REGISTER
@@ -252,14 +326,10 @@ exports.logout = (req, res) => {
 };
 
 // ==========================================
-// FORGOT PASSWORD
+// FORGOT PASSWORD - RESEND API
 // ==========================================
 
-exports.forgotPassword = async (
-  req,
-  res,
-  next
-) => {
+exports.forgotPassword = async (req, res, next) => {
   try {
     const emailResult = z
       .string()
@@ -276,9 +346,7 @@ exports.forgotPassword = async (
 
     const email = emailResult.data.toLowerCase();
 
-    const user = await User.findOne({
-      email,
-    });
+    const user = await User.findOne({ email });
 
     if (user && user.isActive) {
       const token = crypto
@@ -306,49 +374,17 @@ exports.forgotPassword = async (
       const link =
         `${clientUrl}/reset-password?token=${token}`;
 
-      if (
-        process.env.SMTP_HOST &&
-        process.env.SMTP_USER &&
-        process.env.SMTP_PASS
-      ) {
-        const smtpPort = Number(
-          process.env.SMTP_PORT || 587
-        );
-
-        const transport =
-          nodemailer.createTransport({
-            host: process.env.SMTP_HOST,
-            port: smtpPort,
-            secure: smtpPort === 465,
-            auth: {
-              user: process.env.SMTP_USER,
-              pass: process.env.SMTP_PASS,
-            },
-          });
-
-        await transport.sendMail({
-          from:
-            process.env.SMTP_FROM ||
-            process.env.SMTP_USER,
-
-          to: user.email,
-
-          subject:
-            "TravelEase password reset",
-
-          text:
-            "Reset your password using this link " +
-            "(expires in 15 minutes):\n\n" +
-            link,
-        });
-      } else if (!isProduction()) {
-        console.log(
-          "DEV ONLY reset URL:",
+      try {
+        await sendPasswordResetEmail(
+          user.email,
           link
         );
-      } else {
+      } catch (mailError) {
+        // Do not expose email configuration details
+        // or account existence to the client.
         console.error(
-          "SMTP not configured: password reset email not sent"
+          "Password reset email failed:",
+          mailError.message
         );
       }
     }
@@ -367,11 +403,7 @@ exports.forgotPassword = async (
 // RESET PASSWORD
 // ==========================================
 
-exports.resetPassword = async (
-  req,
-  res,
-  next
-) => {
+exports.resetPassword = async (req, res, next) => {
   try {
     const data = validation(
       resetSchema,
