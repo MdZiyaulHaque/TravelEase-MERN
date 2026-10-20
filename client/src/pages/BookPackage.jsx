@@ -3,6 +3,20 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import api from "../services/api";
 
+function getTodayIndia() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const get = (type) =>
+    parts.find((part) => part.type === type)?.value;
+
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
 export default function BookPackage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -18,13 +32,7 @@ export default function BookPackage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // YYYY-MM-DD in local time
-  const today = new Date();
-  const todayString = [
-    today.getFullYear(),
-    String(today.getMonth() + 1).padStart(2, "0"),
-    String(today.getDate()).padStart(2, "0"),
-  ].join("-");
+  const todayString = getTodayIndia();
 
   useEffect(() => {
     let active = true;
@@ -43,21 +51,31 @@ export default function BookPackage() {
 
         if (!active) return;
 
+        console.log(
+          "DEPARTURES API RESPONSE:",
+          departureResponse.data
+        );
+
         setPkg(packageResponse.data?.data || null);
 
+        const departureData =
+          departureResponse.data?.data;
+
         setDepartures(
-          Array.isArray(departureResponse.data?.data)
-            ? departureResponse.data.data
+          Array.isArray(departureData)
+            ? departureData
             : []
         );
       } catch (err) {
-        if (active) {
-          setError(
-            err.response?.data?.message ||
-              err.userMessage ||
-              "Unable to load package details."
-          );
-        }
+        if (!active) return;
+
+        console.error("BOOKING PAGE API ERROR:", err);
+
+        setError(
+          err.response?.data?.message ||
+            err.userMessage ||
+            "Unable to load package details."
+        );
       } finally {
         if (active) setLoading(false);
       }
@@ -70,7 +88,7 @@ export default function BookPackage() {
     };
   }, [id]);
 
-  // Only future departures with enough seats
+  // Allow today and future departures
   const availableDepartures = useMemo(() => {
     return departures
       .filter((departure) => {
@@ -78,21 +96,47 @@ export default function BookPackage() {
 
         const date = String(departure.date).slice(0, 10);
 
-        const isFutureDate = date > todayString;
+        // IMPORTANT: >= allows today's date
+        const isValidDate = date >= todayString;
+
+        const availableSeats = Number(
+          departure.availableSeats ??
+            Number(departure.capacity || 0) -
+              Number(departure.reserved || 0)
+        );
 
         const hasEnoughSeats =
-          Number(departure.availableSeats) >= travelers.length;
+          availableSeats >= travelers.length;
 
-        const isActive = departure.isActive !== false;
+        const isActive =
+          departure.isActive !== false;
 
-        return isFutureDate && hasEnoughSeats && isActive;
+        if (
+          !isValidDate ||
+          !hasEnoughSeats ||
+          !isActive
+        ) {
+          console.log("DEPARTURE FILTERED:", {
+            date,
+            todayString,
+            isValidDate,
+            availableSeats,
+            travelers: travelers.length,
+            isActive,
+          });
+        }
+
+        return (
+          isValidDate &&
+          hasEnoughSeats &&
+          isActive
+        );
       })
       .sort((a, b) =>
         String(a.date).localeCompare(String(b.date))
       );
   }, [departures, travelers.length, todayString]);
 
-  // Clear selected departure if seats become insufficient
   useEffect(() => {
     if (
       departureId &&
@@ -126,7 +170,9 @@ export default function BookPackage() {
   function removeTraveler() {
     if (travelers.length <= 1) return;
 
-    setTravelers((previous) => previous.slice(0, -1));
+    setTravelers((previous) =>
+      previous.slice(0, -1)
+    );
   }
 
   async function submit(event) {
@@ -134,16 +180,22 @@ export default function BookPackage() {
     setError("");
 
     if (!departureId) {
-      setError("Please select an available departure.");
+      setError(
+        "Please select an available departure."
+      );
       return;
     }
 
-    const selectedDeparture = availableDepartures.find(
-      (departure) => departure._id === departureId
-    );
+    const selectedDeparture =
+      availableDepartures.find(
+        (departure) =>
+          departure._id === departureId
+      );
 
     if (!selectedDeparture) {
-      setError("Selected departure is no longer available.");
+      setError(
+        "Selected departure is no longer available."
+      );
       return;
     }
 
@@ -161,6 +213,8 @@ export default function BookPackage() {
 
       navigate("/my-bookings");
     } catch (err) {
+      console.error("BOOKING ERROR:", err);
+
       setError(
         err.response?.data?.message ||
           err.userMessage ||
@@ -181,8 +235,8 @@ export default function BookPackage() {
       </h1>
 
       <p className="text-slate-600 my-3">
-        Select an available departure and enter traveler
-        details to reserve your booking.
+        Select an available departure and enter
+        traveler details to reserve your booking.
       </p>
 
       {error && (
@@ -218,74 +272,93 @@ export default function BookPackage() {
                 Select available departure
               </option>
 
-              {availableDepartures.map((departure) => (
-                <option
-                  key={departure._id}
-                  value={departure._id}
-                >
-                  {String(departure.date).slice(0, 10)}
-                  {" — "}
-                  {departure.availableSeats} seats available
-                </option>
-              ))}
+              {availableDepartures.map(
+                (departure) => {
+                  const seats = Number(
+                    departure.availableSeats ??
+                      Number(
+                        departure.capacity || 0
+                      ) -
+                        Number(
+                          departure.reserved || 0
+                        )
+                  );
+
+                  return (
+                    <option
+                      key={departure._id}
+                      value={departure._id}
+                    >
+                      {String(
+                        departure.date
+                      ).slice(0, 10)}
+                      {" — "}
+                      {seats} seats available
+                    </option>
+                  );
+                }
+              )}
             </select>
           </label>
 
           {availableDepartures.length === 0 && (
             <p className="text-amber-700 bg-amber-50 p-3 rounded-lg">
-              No future departures with enough seats are
-              currently available. Please choose another
-              package or contact the organizer.
+              No available departures for today
+              or upcoming dates. Please choose
+              another package or contact the
+              organizer.
             </p>
           )}
 
-          {travelers.map((traveler, index) => (
-            <div
-              key={index}
-              className="grid grid-cols-1 sm:grid-cols-2 gap-3"
-            >
-              <label className="block">
-                Traveler {index + 1} name
+          {travelers.map(
+            (traveler, index) => (
+              <div
+                key={index}
+                className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+              >
+                <label className="block">
+                  Traveler {index + 1} name
 
-                <input
-                  required
-                  minLength={2}
-                  maxLength={80}
-                  className="w-full border rounded-lg p-3 mt-2"
-                  value={traveler.name}
-                  onChange={(event) =>
-                    changeTraveler(
-                      index,
-                      "name",
-                      event.target.value
-                    )
-                  }
-                  placeholder="Enter full name"
-                />
-              </label>
+                  <input
+                    required
+                    minLength={2}
+                    maxLength={80}
+                    className="w-full border rounded-lg p-3 mt-2"
+                    value={traveler.name}
+                    onChange={(event) =>
+                      changeTraveler(
+                        index,
+                        "name",
+                        event.target.value
+                      )
+                    }
+                    placeholder="Enter full name"
+                  />
+                </label>
 
-              <label className="block">
-                Age
+                <label className="block">
+                  Age
 
-                <input
-                  required
-                  type="number"
-                  min="1"
-                  max="120"
-                  className="w-full border rounded-lg p-3 mt-2"
-                  value={traveler.age}
-                  onChange={(event) =>
-                    changeTraveler(
-                      index,
-                      "age",
-                      event.target.value
-                    )
-                  }
-                  placeholder="Enter age"
-                />
-              </label>
-            </div>
-          ))}
+                  <input
+                    required
+                    type="number"
+                    min="1"
+                    max="120"
+                    className="w-full border rounded-lg p-3 mt-2"
+                    value={traveler.age}
+                    onChange={(event) =>
+                      changeTraveler(
+                        index,
+                        "age",
+                        event.target.value
+                      )
+                    }
+                    placeholder="Enter age"
+                  />
+                </label>
+              </div>
+            )
+          )}
 
           <div className="flex gap-3 flex-wrap">
             <button
@@ -310,7 +383,9 @@ export default function BookPackage() {
           <div className="border-t pt-4">
             <p className="font-bold text-xl">
               Total: ₹
-              {totalAmount.toLocaleString("en-IN")}
+              {totalAmount.toLocaleString(
+                "en-IN"
+              )}
             </p>
 
             <p className="text-sm text-slate-500 mt-1">
@@ -327,7 +402,9 @@ export default function BookPackage() {
               availableDepartures.length === 0
             }
           >
-            {saving ? "Submitting..." : "Reserve Booking"}
+            {saving
+              ? "Submitting..."
+              : "Reserve Booking"}
           </button>
         </form>
       )}
