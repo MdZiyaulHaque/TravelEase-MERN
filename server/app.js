@@ -265,6 +265,11 @@ app.use(
   require("./routes/payment.routes").router
 );
 
+app.use(
+  "/api/contact",
+  require("./routes/contact.routes")
+);
+
 // ========================================
 // STATIC UPLOADS
 // ========================================
